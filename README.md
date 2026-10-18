@@ -39,6 +39,8 @@ Windows 11, October 2026. Numbers vary between machines and with use.
 - **Player:** play/pause, previous/next, shuffle, repeat, seek bar, volume and like
 - **Queue** and **Now Playing** view in the right panel
 - **Synced lyrics:** the current line is highlighted, the lyrics follow the song and clicking a line seeks to it
+- **Lyric translations:** with **Translation** on, each line gets a subtitle in the app language (Brazilian
+  Portuguese or English); lines already in that language stay as they are
 - **Media keys** (even with Tonal minimized) and the current track with its cover in the **Windows media flyout**
 - **Spotify Connect:** Tonal shows up as a device and can also send playback to your phone or another computer
 - **Quality** 96/160/320 kbps (account menu), with volume normalization
@@ -98,6 +100,13 @@ These come from Spotify's rules for apps in development mode (since February 202
 **Lyrics** don't come from Spotify, whose API has none, but from [LRCLIB](https://lrclib.net), an open database
 maintained by volunteers, so not every song is there. Tonal sends LRCLIB the track title, artist, album and
 duration only while the lyrics view is open.
+
+**Lyric translations** come from Google Translate by default, with no sign-up, through the address used by
+Google's own Chrome extension. It is not an official API: Google may block or change it without notice, as it did
+in September 2026 with the address most similar tools used. You can instead paste your own free
+[DeepL API](https://www.deepl.com/pro-api) key (500,000 characters a month) in the lyrics view's ⋯ menu; if its
+monthly quota runs out, Tonal falls back to Google. Only songs opened with Translation on are sent, each line once,
+and translations are cached on disk; the ⋯ menu translates a song again or deletes the saved translations.
 
 **Setlists** come from setlist.fm, and not every song in them is on Spotify (covers and unreleased songs often
 are not): Tonal shows how many it found. Each song becomes one or two Spotify searches.
@@ -201,7 +210,9 @@ src/
   Player.*              playback state, commands, queue, devices
   LibrespotProcess.*    starts/restarts librespot, reads its log, Job Object on Windows
   MediaControls.*       media keys and the Windows media flyout (SMTC)
-  Lyrics.*              LRCLIB lyrics: lookup, picking the right version and parsing LRC
+  Lyrics.*              LRCLIB lyrics: lookup, picking the right version and parsing LRC; translation cache
+  DeepL.*               lyric translation with your own DeepL API key
+  GoogleTranslate.*     lyric translation through Google Translate, no key
   SetlistFm.*           setlist.fm API: band shows, API key check and storage
   NetworkFactory.*      disk cache for covers
 qml/

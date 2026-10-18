@@ -22,7 +22,8 @@ App::App(QObject *parent)
     , m_api(new SpotifyApi(m_nam, m_auth, this))
     , m_librespot(new LibrespotProcess(this))
     , m_player(new Player(m_api, m_librespot, m_auth, this))
-    , m_lyrics(new Lyrics(m_nam, m_player, this))
+    , m_deepl(new DeepL(m_nam, this))
+    , m_lyrics(new Lyrics(m_nam, m_player, m_deepl, this))
     , m_setlistFm(new SetlistFm(m_nam, this))
 {
     auto *cache = new QNetworkDiskCache(m_imageNam);

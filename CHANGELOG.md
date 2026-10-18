@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Lyric translations:** a **Translation** button in the lyrics view adds a subtitle under each line in the app
+  language (Brazilian Portuguese or English). Lines already in that language get none, so Brazilian songs stay as
+  they are. Translations come from Google Translate with no sign-up, or from DeepL with your own free API key, and
+  are cached on disk; the ⋯ menu translates a song again (with either service) or deletes its translation or all
+  saved ones.
+
 ## 0.3.0 (October 2026)
 
 - **English interface:** Tonal is now available in English and Brazilian Portuguese. It follows the Windows

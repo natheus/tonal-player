@@ -1,17 +1,25 @@
 #include "Lyrics.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QLoggingCategory>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QRegularExpression>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
+#include "DeepL.h"
+#include "GoogleTranslate.h"
 #include "Player.h"
 
 Q_LOGGING_CATEGORY(lcLyrics, "tonal.lyrics", QtInfoMsg)
@@ -62,12 +70,18 @@ QList<std::pair<int, QString>> parseLrc(const QString &lrc)
 
 } // namespace
 
-Lyrics::Lyrics(QNetworkAccessManager *nam, Player *player, QObject *parent)
-    : QObject(parent), m_nam(nam), m_player(player)
+Lyrics::Lyrics(QNetworkAccessManager *nam, Player *player, DeepL *deepl, QObject *parent)
+    : QObject(parent), m_nam(nam), m_player(player), m_deepl(deepl), m_google(new GoogleTranslate(nam, this))
 {
+    m_showTranslation = QSettings().value(QStringLiteral("lyrics/translate"), false).toBool();
     connect(m_player, &Player::trackChanged, this, [this] {
         if (m_active)
             load();
+    });
+    // Chave do DeepL salva, trocada ou removida: traduz de novo a letra que está na tela, se ainda falta.
+    connect(m_deepl, &DeepL::apiKeyChanged, this, [this] {
+        if (m_translationStatus == NeedsKey || m_translationStatus == TranslationFailed)
+            updateTranslation();
     });
 }
 
@@ -255,6 +269,7 @@ void Lyrics::show(const Entry &entry)
 {
     m_status = entry.status;
     m_times = entry.times;
+    m_texts = entry.texts;
     m_lines.clear();
     m_lines.reserve(entry.texts.size());
     for (qsizetype i = 0; i < entry.texts.size(); ++i) {
@@ -262,4 +277,198 @@ void Lyrics::show(const Entry &entry)
                                      { QStringLiteral("text"), entry.texts.at(i) } });
     }
     emit changed();
+    updateTranslation();
+}
+
+// ------------------------------------------------------------ legendas (tradução pelo DeepL)
+
+void Lyrics::setShowTranslation(bool show)
+{
+    if (show == m_showTranslation)
+        return;
+    m_showTranslation = show;
+    QSettings().setValue(QStringLiteral("lyrics/translate"), show);
+    emit showTranslationChanged();
+    updateTranslation();
+}
+
+QString Lyrics::translationAt(int index) const
+{
+    return m_translations.value(index);
+}
+
+void Lyrics::retryTranslation()
+{
+    if (m_translationStatus == TranslationFailed)
+        updateTranslation();
+}
+
+void Lyrics::setTranslationStatus(TranslationStatus status)
+{
+    m_translationStatus = status;
+    ++m_translationRevision;
+    emit translationChanged();
+}
+
+QString Lyrics::translationCacheDir()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/translations");
+}
+
+QString Lyrics::translationCacheFile(const QString &target) const
+{
+    return translationCacheDir() + QLatin1Char('/') + m_trackUri.section(QLatin1Char(':'), -1) + QLatin1Char('-')
+           + target + QStringLiteral(".json");
+}
+
+void Lyrics::retranslate(const QString &provider)
+{
+    if (m_trackUri.isEmpty())
+        return;
+    // As duas línguas: a tradução antiga não pode voltar se a pessoa trocar o idioma do app depois.
+    QFile::remove(translationCacheFile(QStringLiteral("PT-BR")));
+    QFile::remove(translationCacheFile(QStringLiteral("EN-US")));
+    m_forcedProvider = provider;
+    updateTranslation();
+}
+
+void Lyrics::forgetTranslation()
+{
+    if (m_trackUri.isEmpty())
+        return;
+    QFile::remove(translationCacheFile(QStringLiteral("PT-BR")));
+    QFile::remove(translationCacheFile(QStringLiteral("EN-US")));
+    ++m_translationSerial; // uma tradução em andamento não volta a aparecer
+    m_translations.clear();
+    m_translationError.clear();
+    m_translationProvider.clear();
+    setTranslationStatus(TranslationRemoved);
+}
+
+int Lyrics::savedTranslationCount() const
+{
+    return int(QDir(translationCacheDir()).entryList({ QStringLiteral("*.json") }, QDir::Files).size());
+}
+
+int Lyrics::clearSavedTranslations()
+{
+    const int count = savedTranslationCount();
+    QDir(translationCacheDir()).removeRecursively();
+    qCDebug(lcLyrics) << "traduções salvas apagadas:" << count;
+    return count;
+}
+
+void Lyrics::updateTranslation()
+{
+    ++m_translationSerial; // descarta a resposta de uma tradução anterior
+    const QString forced = std::exchange(m_forcedProvider, QString());
+    m_translations.clear();
+    m_translationError.clear();
+    m_translationProvider.clear();
+    if (!m_showTranslation || (m_status != Synced && m_status != Plain)) {
+        setTranslationStatus(TranslationOff);
+        return;
+    }
+
+    // Cada linha uma vez só: o refrão repetido não gasta cota de novo.
+    QStringList sources;
+    for (const QString &text : std::as_const(m_texts)) {
+        if (!text.isEmpty() && !sources.contains(text))
+            sources << text;
+    }
+    const QString target = QLocale().language() == QLocale::English ? QStringLiteral("EN-US") : QStringLiteral("PT-BR");
+    if (sources.isEmpty()) {
+        applyTranslation({}, {}, {}, target);
+        return;
+    }
+
+    // Já traduzida antes (vale só se a letra for a mesma).
+    QFile cached(translationCacheFile(target));
+    if (cached.open(QIODevice::ReadOnly)) {
+        const QJsonObject obj = QJsonDocument::fromJson(cached.readAll()).object();
+        QStringList cachedSources;
+        for (const QJsonValue &v : obj.value(QStringLiteral("sources")).toArray())
+            cachedSources << v.toString();
+        if (cachedSources == sources) {
+            QStringList translations;
+            QStringList languages;
+            for (const QJsonValue &v : obj.value(QStringLiteral("translations")).toArray())
+                translations << v.toString();
+            for (const QJsonValue &v : obj.value(QStringLiteral("languages")).toArray())
+                languages << v.toString();
+            m_translationProvider = obj.value(QStringLiteral("provider")).toString();
+            applyTranslation(sources, translations, languages, target);
+            return;
+        }
+    }
+
+    setTranslationStatus(Translating);
+    const bool useDeepL = forced == QLatin1String("Google") ? false : m_deepl->hasApiKey();
+    requestTranslation(sources, target, useDeepL);
+}
+
+void Lyrics::requestTranslation(const QStringList &sources, const QString &target, bool useDeepL)
+{
+    const int serial = m_translationSerial;
+    auto done = [this, serial, sources, target, useDeepL](const QString &error, int status,
+                                                          const QStringList &translated, const QStringList &languages) {
+        if (serial != m_translationSerial)
+            return;
+        if (error.isEmpty()) {
+            finishTranslation(sources, translated, languages, target,
+                              useDeepL ? QStringLiteral("DeepL") : QStringLiteral("Google"));
+            return;
+        }
+        // Cota do DeepL acabada no mês: segue pelo Google até ela voltar.
+        if (useDeepL && status == 456) {
+            requestTranslation(sources, target, false);
+            return;
+        }
+        m_translationError = error;
+        // Chave do DeepL recusada: a tela pede a chave de novo, com o erro.
+        setTranslationStatus(useDeepL && (status == 401 || status == 403) ? NeedsKey : TranslationFailed);
+    };
+    if (useDeepL)
+        m_deepl->translate(sources, target, done);
+    else
+        m_google->translate(sources, target, done);
+}
+
+void Lyrics::finishTranslation(const QStringList &sources, const QStringList &translated,
+                               const QStringList &languages, const QString &target, const QString &provider)
+{
+    const QString cacheFile = translationCacheFile(target);
+    QDir().mkpath(cacheFile.section(QLatin1Char('/'), 0, -2));
+    QFile file(cacheFile);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(QJsonDocument(QJsonObject {
+                                     { QStringLiteral("provider"), provider },
+                                     { QStringLiteral("sources"), QJsonArray::fromStringList(sources) },
+                                     { QStringLiteral("translations"), QJsonArray::fromStringList(translated) },
+                                     { QStringLiteral("languages"), QJsonArray::fromStringList(languages) },
+                                 })
+                       .toJson(QJsonDocument::Compact));
+    }
+    m_translationProvider = provider;
+    applyTranslation(sources, translated, languages, target);
+}
+
+void Lyrics::applyTranslation(const QStringList &sources, const QStringList &translations,
+                              const QStringList &languages, const QString &target)
+{
+    // Sem legenda nas linhas que já estão no idioma do app (ou que voltaram iguais): a música brasileira inteira,
+    // ou só o trecho em português de uma música misturada.
+    const QString family = target.section(QLatin1Char('-'), 0, 0); // "PT-BR" → "PT"
+    QHash<QString, QString> byLine;
+    for (qsizetype i = 0; i < sources.size(); ++i) {
+        const QString translated = translations.value(i).trimmed();
+        if (translated.isEmpty() || languages.value(i).startsWith(family, Qt::CaseInsensitive)
+            || translated.compare(sources.at(i), Qt::CaseInsensitive) == 0)
+            continue;
+        byLine.insert(sources.at(i), translated);
+    }
+    m_translations.clear();
+    for (const QString &text : std::as_const(m_texts))
+        m_translations << byLine.value(text);
+    setTranslationStatus(byLine.isEmpty() ? AlreadyInLanguage : Translated);
 }

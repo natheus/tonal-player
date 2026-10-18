@@ -12,6 +12,26 @@ Item {
     property bool follow: true      // acompanha a música; para por alguns segundos quando a pessoa rola
     readonly property int status: App.lyrics.status
     readonly property bool synced: status === Lyrics.Synced
+    readonly property bool hasLines: synced || status === Lyrics.Plain
+    readonly property int translationStatus: App.lyrics.translationStatus
+    property bool checkingKey: false
+    property string keyError: ""
+    property bool editingKey: false     // cartão da chave do DeepL aberto pelo link (sem chave, traduz pelo Google)
+
+    function saveKey() {
+        if (checkingKey) return
+        checkingKey = true
+        keyError = ""
+        App.deepl.setApiKey(keyField.text, function(error) {
+            root.checkingKey = false
+            root.keyError = error
+            if (error === "") {
+                keyField.text = ""
+                root.editingKey = false
+            }
+        })
+    }
+
     // Destaca a linha um pouco antes: a posição do Spotify chega com o atraso da rede.
     readonly property int lead: 250
 
@@ -74,17 +94,247 @@ Item {
         Behavior on color { ColorAnimation { duration: 400 } }
     }
 
+    // ------------------------------------------------------------ legendas: botão e status
+    Item {
+        id: translationBar
+        visible: root.hasLines
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? 56 : 0
+
+        Row {
+            anchors.right: parent.right
+            anchors.rightMargin: 24
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 12
+
+            Label {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: text !== ""
+                color: root.translationStatus === Lyrics.TranslationFailed ? Theme.danger : Theme.textSecondary
+                font.pixelSize: 13
+                text: {
+                    switch (root.translationStatus) {
+                    case Lyrics.Translating: return qsTr("Traduzindo…")
+                    case Lyrics.Translated:
+                        return App.lyrics.translationProvider === "DeepL" ? qsTr("Tradução automática do DeepL")
+                                                                          : qsTr("Tradução automática do Google")
+                    case Lyrics.AlreadyInLanguage:
+                        return App.language === "en" ? qsTr("A letra já está em inglês") : qsTr("A letra já está em português")
+                    case Lyrics.TranslationFailed: return App.lyrics.translationError
+                    case Lyrics.TranslationRemoved: return qsTr("Tradução desta música apagada")
+                    default: return ""
+                    }
+                }
+            }
+            Label {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.translationStatus === Lyrics.TranslationFailed
+                text: qsTr("Tentar de novo")
+                color: retryMouse.containsMouse ? Theme.textPrimary : Theme.textSecondary
+                font.pixelSize: 13
+                font.underline: retryMouse.containsMouse
+                MouseArea {
+                    id: retryMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: App.lyrics.retryTranslation()
+                }
+            }
+            IconButton {
+                id: translationMenuButton
+                anchors.verticalCenter: parent.verticalCenter
+                visible: App.lyrics.showTranslation
+                iconSize: 20
+                fillPath: Icons.dotsF
+                tooltip: qsTr("Opções da tradução")
+                onClicked: translationMenu.popup(translationMenuButton, 0, translationMenuButton.height)
+            }
+            Chip {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Tradução")
+                checked: App.lyrics.showTranslation
+                onClicked: {
+                    App.lyrics.showTranslation = !App.lyrics.showTranslation
+                    root.editingKey = false
+                }
+            }
+        }
+    }
+
+    // Menu ⋯ da tradução: buscar de novo em outra fonte, chave do DeepL e limpar o que ficou salvo.
+    DarkMenu {
+        id: translationMenu
+        property int savedCount: 0
+        onAboutToShow: savedCount = App.lyrics.savedTranslationCount()
+
+        // Apagam a tradução salva desta música e buscam de novo na fonte escolhida.
+        DarkMenuItem {
+            text: qsTr("Traduzir de novo pelo Google")
+            onTriggered: App.lyrics.retranslate("Google")
+        }
+        DarkMenuItem {
+            text: qsTr("Traduzir de novo pelo DeepL")
+            visible: App.deepl.hasApiKey
+            height: visible ? implicitHeight : 0
+            onTriggered: App.lyrics.retranslate("DeepL")
+        }
+        DarkMenuItem {
+            text: qsTr("Apagar a tradução desta música")
+            enabled: root.translationStatus === Lyrics.Translated || root.translationStatus === Lyrics.AlreadyInLanguage
+            onTriggered: App.lyrics.forgetTranslation()
+        }
+        MenuSeparator {
+            contentItem: Rectangle { implicitHeight: 1; color: Theme.divider }
+        }
+        DarkMenuItem {
+            text: App.deepl.hasApiKey ? qsTr("Trocar a chave do DeepL") : qsTr("Usar o DeepL")
+            onTriggered: root.editingKey = true
+        }
+        MenuSeparator {
+            contentItem: Rectangle { implicitHeight: 1; color: Theme.divider }
+        }
+        DarkMenuItem {
+            text: qsTr("Apagar as traduções salvas (%1)").arg(translationMenu.savedCount)
+            enabled: translationMenu.savedCount > 0
+            onTriggered: {
+                const n = App.lyrics.clearSavedTranslations()
+                Nav.toast(n === 1 ? qsTr("1 tradução salva apagada") : qsTr("%1 traduções salvas apagadas").arg(n))
+            }
+        }
+    }
+
+    // Chave do DeepL: aberta pelo menu ⋯ ("Usar o DeepL"), ou sozinha quando o DeepL recusa a chave salva
+    Rectangle {
+        id: keyCard
+        visible: root.hasLines && App.lyrics.showTranslation
+                 && (root.editingKey || root.translationStatus === Lyrics.NeedsKey)
+        anchors.top: translationBar.bottom
+        anchors.left: parent.left
+        anchors.leftMargin: 48
+        width: Math.min(parent.width - 72, 720)
+        height: visible ? keyColumn.height + 40 : 0
+        radius: 8
+        color: Qt.rgba(0, 0, 0, 0.35)
+
+        Column {
+            id: keyColumn
+            x: 20
+            y: 20
+            width: parent.width - 40
+            spacing: 12
+
+            Label {
+                text: qsTr("Traduzir com o DeepL")
+                color: Theme.textPrimary
+                font.pixelSize: 18
+                font.weight: Font.Bold
+            }
+            Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                color: Theme.textSecondary
+                font.pixelSize: 14
+                text: qsTr("Sem chave, o Tonal traduz pelo Google Tradutor, sem cadastro. Com uma chave do DeepL (plano grátis de 500 mil caracteres por mês, umas 200 letras), ele passa a usar o DeepL, que costuma traduzir melhor e é uma API oficial. A chave fica guardada no Gerenciador de Credenciais do Windows.")
+            }
+            Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                color: Theme.textPrimary
+                font.pixelSize: 14
+                lineHeight: 1.3
+                text: qsTr("1. Crie uma conta no plano DeepL API Free (o cadastro pede um cartão só para confirmar a identidade).\n2. Na sua conta do DeepL, abra Chaves de API e copie a chave.\n3. Cole a chave aqui.")
+            }
+            PillButton {
+                primary: false
+                text: qsTr("Abrir o DeepL")
+                onClicked: Qt.openUrlExternally("https://www.deepl.com/pro-api")
+            }
+            Row {
+                width: parent.width
+                spacing: 12
+                TextField {
+                    id: keyField
+                    width: parent.width - saveKeyButton.width - 12
+                           - (cancelKeyButton.visible ? cancelKeyButton.width + 12 : 0)
+                           - (removeKeyButton.visible ? removeKeyButton.width + 12 : 0)
+                    height: 40
+                    leftPadding: 12
+                    placeholderText: qsTr("Chave do DeepL")
+                    placeholderTextColor: Theme.textMuted
+                    color: Theme.textPrimary
+                    font.pixelSize: 14
+                    font.family: "Consolas"
+                    selectByMouse: true
+                    enabled: !root.checkingKey
+                    onAccepted: root.saveKey()
+                    background: Rectangle {
+                        radius: 4
+                        color: Qt.rgba(1, 1, 1, 0.07)
+                        border.width: keyField.activeFocus ? 1 : 0
+                        border.color: Theme.textMuted
+                    }
+                }
+                PillButton {
+                    id: saveKeyButton
+                    text: root.checkingKey ? qsTr("Conferindo…") : qsTr("Salvar")
+                    enabled: keyField.text.trim() !== "" && !root.checkingKey
+                    onClicked: root.saveKey()
+                }
+                PillButton {
+                    id: cancelKeyButton
+                    visible: root.translationStatus !== Lyrics.NeedsKey
+                    primary: false
+                    text: qsTr("Cancelar")
+                    onClicked: {
+                        root.editingKey = false
+                        root.keyError = ""
+                        keyField.text = ""
+                    }
+                }
+                // Volta para o Google (também a saída quando o DeepL recusa a chave).
+                PillButton {
+                    id: removeKeyButton
+                    visible: App.deepl.hasApiKey
+                    primary: false
+                    text: qsTr("Remover a chave")
+                    onClicked: {
+                        App.deepl.forgetApiKey()
+                        root.editingKey = false
+                        root.keyError = ""
+                    }
+                }
+            }
+            Label {
+                // Erro ao salvar ou, depois de uma recusa, o motivo que o DeepL deu
+                readonly property string message: root.keyError !== "" ? root.keyError : App.lyrics.translationError
+                visible: message !== ""
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: message
+                color: Theme.danger
+                font.pixelSize: 13
+            }
+        }
+    }
+
     ListView {
         id: list
-        anchors.fill: parent
+        anchors.top: keyCard.visible ? keyCard.bottom : translationBar.bottom
+        anchors.topMargin: keyCard.visible ? 16 : 0
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
         anchors.leftMargin: 48
         anchors.rightMargin: 24
-        visible: root.synced || root.status === Lyrics.Plain
+        visible: root.hasLines
         model: visible ? App.lyrics.lines : []
         reuseItems: true
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        topMargin: 40
+        topMargin: 16
         bottomMargin: height * 0.5          // deixa as últimas linhas subirem até a altura da linha atual
         ScrollBar.vertical: ThinScrollBar { }
 
@@ -104,32 +354,63 @@ Item {
         }
         onMovementEnded: resumeFollow.restart()
 
-        header: Label {
+        // A altura fica no Item: no próprio Label, height ligada ao implicitHeight dava "Binding loop".
+        header: Item {
             width: ListView.view.width
-            visible: root.status === Lyrics.Plain
-            height: visible ? implicitHeight + 24 : 0
-            text: qsTr("Esta letra não está sincronizada com a música.")
-            color: Theme.textSecondary
-            font.pixelSize: 14
+            height: plainNote.visible ? plainNote.implicitHeight + 24 : 0
+            Label {
+                id: plainNote
+                width: parent.width
+                visible: root.status === Lyrics.Plain
+                text: qsTr("Esta letra não está sincronizada com a música.")
+                color: Theme.textSecondary
+                font.pixelSize: 14
+            }
         }
 
-        delegate: Text {
+        delegate: Item {
             id: line
             required property var modelData
             required property int index
+            // translationRevision muda a cada tradução: é o que faz a legenda aparecer quando chega.
+            readonly property string translation: App.lyrics.showTranslation && App.lyrics.translationRevision >= 0
+                                                   ? App.lyrics.translationAt(index) : ""
 
             width: ListView.view.width
-            topPadding: 6
-            bottomPadding: 6
-            rightPadding: 24
-            text: modelData.text !== "" ? modelData.text : (root.synced ? "♪" : " ")
-            wrapMode: Text.Wrap
-            font.pixelSize: 28
-            font.weight: Font.Bold
-            color: Theme.textPrimary
+            height: lineTexts.height
             opacity: !root.synced || hover.containsMouse || index === root.current ? 1
                      : index < root.current ? 0.7 : 0.45
             Behavior on opacity { NumberAnimation { duration: 200 } }
+
+            Column {
+                id: lineTexts
+                width: parent.width
+                topPadding: 6
+                bottomPadding: 6
+                spacing: 2
+
+                Text {
+                    width: parent.width
+                    rightPadding: 24
+                    text: line.modelData.text !== "" ? line.modelData.text : (root.synced ? "♪" : " ")
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 28
+                    font.weight: Font.Bold
+                    color: Theme.textPrimary
+                }
+                // Legenda: menor e mais clara, logo abaixo da linha original
+                Text {
+                    visible: line.translation !== ""
+                    width: parent.width
+                    rightPadding: 24
+                    text: line.translation
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 20
+                    font.weight: Font.Medium
+                    color: Theme.textPrimary
+                    opacity: 0.75
+                }
+            }
 
             MouseArea {
                 id: hover

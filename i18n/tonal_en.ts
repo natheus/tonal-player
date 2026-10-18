@@ -239,6 +239,41 @@
     </message>
 </context>
 <context>
+    <name>DeepL</name>
+    <message>
+        <source>O DeepL recusou a chave. Confira se copiou a chave inteira.</source>
+        <translation>DeepL refused the key. Check that you copied the whole key.</translation>
+    </message>
+    <message>
+        <source>A cota grátis do DeepL deste mês acabou.</source>
+        <translation>This month&apos;s free DeepL quota is used up.</translation>
+    </message>
+    <message>
+        <source>O DeepL recebeu pedidos demais. Tente de novo em alguns segundos.</source>
+        <translation>DeepL received too many requests. Try again in a few seconds.</translation>
+    </message>
+    <message>
+        <source>Não consegui falar com o DeepL (%1).</source>
+        <translation>Couldn&apos;t reach DeepL (%1).</translation>
+    </message>
+    <message>
+        <source>O DeepL respondeu com erro %1.</source>
+        <translation>DeepL answered with error %1.</translation>
+    </message>
+    <message>
+        <source>Cole a chave do DeepL.</source>
+        <translation>Paste your DeepL key.</translation>
+    </message>
+    <message>
+        <source>Falta a chave do DeepL.</source>
+        <translation>The DeepL key is missing.</translation>
+    </message>
+    <message>
+        <source>O DeepL respondeu com %1 traduções para %2 linhas.</source>
+        <translation>DeepL answered with %1 translations for %2 lines.</translation>
+    </message>
+</context>
+<context>
     <name>DevicePopup</name>
     <message>
         <source>Conectar a um dispositivo</source>
@@ -267,6 +302,25 @@
     <message>
         <source>Nenhum dispositivo encontrado. Abra o Spotify em outro aparelho ou aguarde o motor de áudio iniciar.</source>
         <translation>No devices found. Open Spotify on another device or wait for the audio engine to start.</translation>
+    </message>
+</context>
+<context>
+    <name>GoogleTranslate</name>
+    <message>
+        <source>O Google bloqueou as traduções por um tempo. Tente de novo mais tarde ou use uma chave do DeepL.</source>
+        <translation>Google blocked translations for a while. Try again later or use a DeepL key.</translation>
+    </message>
+    <message>
+        <source>Não consegui falar com o Google Tradutor (%1).</source>
+        <translation>Couldn&apos;t reach Google Translate (%1).</translation>
+    </message>
+    <message>
+        <source>O Google Tradutor respondeu com erro %1.</source>
+        <translation>Google Translate answered with error %1.</translation>
+    </message>
+    <message>
+        <source>O Google Tradutor respondeu com %1 traduções para %2 linhas.</source>
+        <translation>Google Translate answered with %1 translations for %2 lines.</translation>
     </message>
 </context>
 <context>
@@ -561,6 +615,110 @@
     <message>
         <source>Tentar de novo</source>
         <translation>Try again</translation>
+    </message>
+    <message>
+        <source>Traduzindo…</source>
+        <translation>Translating…</translation>
+    </message>
+    <message>
+        <source>Tradução automática do DeepL</source>
+        <translation>Machine translation by DeepL</translation>
+    </message>
+    <message>
+        <source>A letra já está em inglês</source>
+        <translation>The lyrics are already in English</translation>
+    </message>
+    <message>
+        <source>A letra já está em português</source>
+        <translation>The lyrics are already in Portuguese</translation>
+    </message>
+    <message>
+        <source>Tradução</source>
+        <translation>Translation</translation>
+    </message>
+    <message>
+        <source>1. Crie uma conta no plano DeepL API Free (o cadastro pede um cartão só para confirmar a identidade).
+2. Na sua conta do DeepL, abra Chaves de API e copie a chave.
+3. Cole a chave aqui.</source>
+        <translation>1. Sign up for the DeepL API Free plan (it asks for a card only to verify your identity).
+2. In your DeepL account, open API Keys and copy the key.
+3. Paste the key here.</translation>
+    </message>
+    <message>
+        <source>Abrir o DeepL</source>
+        <translation>Open DeepL</translation>
+    </message>
+    <message>
+        <source>Chave do DeepL</source>
+        <translation>DeepL key</translation>
+    </message>
+    <message>
+        <source>Conferindo…</source>
+        <translation>Checking…</translation>
+    </message>
+    <message>
+        <source>Salvar</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>Tradução automática do Google</source>
+        <translation>Machine translation by Google</translation>
+    </message>
+    <message>
+        <source>Trocar a chave do DeepL</source>
+        <translation>Change the DeepL key</translation>
+    </message>
+    <message>
+        <source>Usar o DeepL</source>
+        <translation>Use DeepL</translation>
+    </message>
+    <message>
+        <source>Traduzir com o DeepL</source>
+        <translation>Translate with DeepL</translation>
+    </message>
+    <message>
+        <source>Sem chave, o Tonal traduz pelo Google Tradutor, sem cadastro. Com uma chave do DeepL (plano grátis de 500 mil caracteres por mês, umas 200 letras), ele passa a usar o DeepL, que costuma traduzir melhor e é uma API oficial. A chave fica guardada no Gerenciador de Credenciais do Windows.</source>
+        <translation>Without a key, Tonal translates with Google Translate, no sign-up needed. With a DeepL key (free plan of 500,000 characters a month, about 200 songs), it uses DeepL instead, which usually translates better and is an official API. The key is stored in Windows Credential Manager.</translation>
+    </message>
+    <message>
+        <source>Cancelar</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>Remover a chave</source>
+        <translation>Remove the key</translation>
+    </message>
+    <message>
+        <source>Opções da tradução</source>
+        <translation>Translation options</translation>
+    </message>
+    <message>
+        <source>Traduzir de novo pelo Google</source>
+        <translation>Translate again with Google</translation>
+    </message>
+    <message>
+        <source>Traduzir de novo pelo DeepL</source>
+        <translation>Translate again with DeepL</translation>
+    </message>
+    <message>
+        <source>Apagar as traduções salvas (%1)</source>
+        <translation>Delete saved translations (%1)</translation>
+    </message>
+    <message>
+        <source>1 tradução salva apagada</source>
+        <translation>1 saved translation deleted</translation>
+    </message>
+    <message>
+        <source>%1 traduções salvas apagadas</source>
+        <translation>%1 saved translations deleted</translation>
+    </message>
+    <message>
+        <source>Tradução desta música apagada</source>
+        <translation>This song&apos;s translation was deleted</translation>
+    </message>
+    <message>
+        <source>Apagar a tradução desta música</source>
+        <translation>Delete this song&apos;s translation</translation>
     </message>
 </context>
 <context>

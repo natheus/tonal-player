@@ -20,6 +20,8 @@ set(TONAL_SOURCES
     src/Player.h            src/Player.cpp
     src/MediaControls.h     src/MediaControls.cpp
     src/Lyrics.h            src/Lyrics.cpp
+    src/DeepL.h             src/DeepL.cpp
+    src/GoogleTranslate.h   src/GoogleTranslate.cpp
     src/SetlistFm.h         src/SetlistFm.cpp
     src/NetworkFactory.h    src/NetworkFactory.cpp
 )

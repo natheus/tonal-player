@@ -10,6 +10,7 @@ class QNetworkAccessManager;
 class QQmlEngine;
 
 #include "AuthManager.h"
+#include "DeepL.h"
 #include "LibrespotProcess.h"
 #include "Lyrics.h"
 #include "Player.h"
@@ -38,6 +39,11 @@ struct LibrespotForeign {
     QML_NAMED_ELEMENT(Librespot)
     QML_UNCREATABLE("Use App.librespot")
 };
+struct DeepLForeign {
+    Q_GADGET
+    QML_FOREIGN(DeepL)
+    QML_ANONYMOUS
+};
 struct SetlistFmForeign {
     Q_GADGET
     QML_FOREIGN(SetlistFm)
@@ -50,7 +56,7 @@ struct LyricsForeign {
     QML_UNCREATABLE("Use App.lyrics")
 };
 
-// Ponto de entrada do QML: App.auth, App.api, App.player, App.librespot, App.lyrics, App.setlistFm
+// Ponto de entrada do QML: App.auth, App.api, App.player, App.librespot, App.lyrics, App.deepl, App.setlistFm
 class App : public QObject
 {
     Q_OBJECT
@@ -61,6 +67,7 @@ class App : public QObject
     Q_PROPERTY(Player *player READ player CONSTANT)
     Q_PROPERTY(LibrespotProcess *librespot READ librespot CONSTANT)
     Q_PROPERTY(Lyrics *lyrics READ lyrics CONSTANT)
+    Q_PROPERTY(DeepL *deepl READ deepl CONSTANT)
     Q_PROPERTY(SetlistFm *setlistFm READ setlistFm CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
     // Idioma em uso nesta execução: "pt" ou "en".
@@ -81,6 +88,7 @@ public:
     Player *player() const { return m_player; }
     LibrespotProcess *librespot() const { return m_librespot; }
     Lyrics *lyrics() const { return m_lyrics; }
+    DeepL *deepl() const { return m_deepl; }
     SetlistFm *setlistFm() const { return m_setlistFm; }
     QString version() const;
     QString language() const;
@@ -111,6 +119,7 @@ private:
     SpotifyApi *m_api;
     LibrespotProcess *m_librespot;
     Player *m_player;
+    DeepL *m_deepl;
     Lyrics *m_lyrics;
     SetlistFm *m_setlistFm;
 };
