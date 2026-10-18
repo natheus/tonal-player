@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (October 2026)
 
 - **Lyric translations:** a **Translation** button in the lyrics view adds a subtitle under each line in the app
   language (Brazilian Portuguese or English). Lines already in that language get none, so Brazilian songs stay as
