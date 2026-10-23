@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (October 2026)
 
 - **Taskbar buttons:** hovering over Tonal in the taskbar shows previous, play/pause and next buttons under the
   window thumbnail, like other music players.
