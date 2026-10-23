@@ -41,7 +41,8 @@ Windows 11, October 2026. Numbers vary between machines and with use.
 - **Synced lyrics:** the current line is highlighted, the lyrics follow the song and clicking a line seeks to it
 - **Lyric translations:** with **Translation** on, each line gets a subtitle in the app language (Brazilian
   Portuguese or English); lines already in that language stay as they are
-- **Media keys** (even with Tonal minimized) and the current track with its cover in the **Windows media flyout**
+- **Media keys** (even with Tonal minimized), **previous, play/pause and next buttons** in Tonal's taskbar
+  thumbnail, and the current track with its cover in the **Windows media flyout**
 - **Spotify Connect:** Tonal shows up as a device and can also send playback to your phone or another computer
 - **Quality** 96/160/320 kbps (account menu), with volume normalization
 - **English or Portuguese** interface (account menu → Language; Tonal restarts to switch)

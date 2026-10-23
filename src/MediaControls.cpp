@@ -18,8 +18,14 @@
 
 #include "MediaControls.h"
 
+#include <QAbstractNativeEventFilter>
 #include <QCoreApplication>
+#include <QImage>
 #include <QLoggingCategory>
+#include <QPainter>
+#include <QPainterPath>
+#include <QRegularExpression>
+#include <QSettings>
 #include <QWindow>
 
 #include "Player.h"
@@ -81,64 +87,105 @@ wrl::ComPtr<streams::IRandomAccessStreamReference> thumbnailFromUrl(const QStrin
     return {};
 }
 
+// Botões da miniatura na barra de tarefas (ao passar o mouse sobre o Tonal): anterior, tocar/pausar, próxima.
+enum ThumbButton : UINT { ThumbPrevious = 1, ThumbPlayPause, ThumbNext };
+
+// Os mesmos desenhos de Icons.qml (grade 24x24, só M, L e Z): prevF, playF, pauseF, nextF.
+const char *const kThumbIcons[4] = {
+    "M19 5 L19 19 L9 12 Z M5 5 L7.5 5 L7.5 19 L5 19 Z",
+    "M7 4.5 L19.5 12 L7 19.5 Z",
+    "M6 4 L10 4 L10 20 L6 20 Z M14 4 L18 4 L18 20 L14 20 Z",
+    "M5 5 L15 12 L5 19 Z M16.5 5 L19 5 L19 19 L16.5 19 Z",
+};
+
+HICON makeIcon(const char *svgPath, int size, const QColor &color)
+{
+    static const QRegularExpression token(QStringLiteral(R"([MLZ]|-?\d*\.?\d+)"));
+    QPainterPath path;
+    QChar command;
+    QList<qreal> numbers;
+    for (auto it = token.globalMatch(QLatin1String(svgPath)); it.hasNext();) {
+        const QString t = it.next().captured();
+        if (t == QLatin1String("Z")) {
+            path.closeSubpath();
+        } else if (t == QLatin1String("M") || t == QLatin1String("L")) {
+            command = t.at(0);
+        } else {
+            numbers << t.toDouble();
+            if (numbers.size() < 2)
+                continue;
+            const QPointF point(numbers.at(0), numbers.at(1));
+            numbers.clear();
+            if (command == QLatin1Char('M'))
+                path.moveTo(point);
+            else
+                path.lineTo(point);
+        }
+    }
+    QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.scale(size / 24.0, size / 24.0);
+    painter.fillPath(path, color);
+    painter.end();
+    return image.toHICON();
+}
+
 } // namespace
 
-struct MediaControls::Native
+struct MediaControls::Native : QAbstractNativeEventFilter
 {
+    MediaControls *owner = nullptr;
+    HWND hwnd = nullptr;
+
+    // SMTC: nulo se o Windows recusou (os botões da miniatura funcionam mesmo assim).
     wrl::ComPtr<media::ISystemMediaTransportControls> smtc;
     wrl::ComPtr<media::ISystemMediaTransportControls2> smtc2;
     EventRegistrationToken buttonToken {};
     EventRegistrationToken seekToken {};
+
+    // Miniatura na barra de tarefas
+    wrl::ComPtr<ITaskbarList3> taskbar;
+    UINT taskbarButtonCreated = 0;
+    HICON icons[4] {};      // anterior, tocar, pausar, próxima
+    int thumbState = -1;    // bit 0: tem faixa; bit 1: tocando (-1 = botões ainda não estão na barra)
+
+    ~Native() override
+    {
+        if (QCoreApplication::instance())
+            QCoreApplication::instance()->removeNativeEventFilter(this);
+        for (HICON icon : icons) {
+            if (icon)
+                DestroyIcon(icon);
+        }
+    }
+
+    bool attachSmtc();
+    void attachThumbBar();
+    void addThumbButtons();
+    void updateThumbButtons(bool hasTrack, bool playing);
+    void fillThumbButtons(THUMBBUTTON *buttons, bool hasTrack, bool playing) const;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 };
 
-MediaControls::MediaControls(Player *player, QObject *parent)
-    : QObject(parent), m_player(player)
+bool MediaControls::Native::attachSmtc()
 {
-    // O Player emite trackChanged, stateChanged e positionChanged em sequência a cada consulta: junta tudo
-    // numa atualização só.
-    m_syncTimer.setSingleShot(true);
-    m_syncTimer.setInterval(0);
-    connect(&m_syncTimer, &QTimer::timeout, this, &MediaControls::sync);
-}
-
-MediaControls::~MediaControls()
-{
-    if (!d)
-        return;
-    s_instance = nullptr;
-    d->smtc->remove_ButtonPressed(d->buttonToken);
-    d->smtc2->remove_PlaybackPositionChangeRequested(d->seekToken);
-    d->smtc->put_IsEnabled(false);
-}
-
-void MediaControls::setAppUserModelId()
-{
-    // O mesmo id vai no AppUserModelID dos atalhos em packaging/tonal.iss. Não mude: o painel de mídia e a
-    // barra de tarefas deixam de achar o atalho.
-    ok(SetCurrentProcessExplicitAppUserModelID(L"Tonal.Player"), "AppUserModelID:");
-}
-
-void MediaControls::attach(QWindow *window)
-{
-    if (!window || d)
-        return;
-    auto native = std::make_unique<Native>();
     wrl::ComPtr<ISystemMediaTransportControlsInterop> interop;
     if (!ok(RoGetActivationFactory(
                 wrl::Wrappers::HStringReference(RuntimeClass_Windows_Media_SystemMediaTransportControls).Get(),
                 IID_PPV_ARGS(&interop)), "Controle de mídia do Windows indisponível:")
-        || !ok(interop->GetForWindow(reinterpret_cast<HWND>(window->winId()), IID_PPV_ARGS(&native->smtc)),
+        || !ok(interop->GetForWindow(hwnd, IID_PPV_ARGS(&smtc)),
                "Controle de mídia do Windows indisponível (GetForWindow):")
-        || !ok(native->smtc.As(&native->smtc2), "Controle de mídia do Windows sem a linha do tempo:"))
-        return;
+        || !ok(smtc.As(&smtc2), "Controle de mídia do Windows sem a linha do tempo:"))
+        return false;
 
-    auto *smtc = native->smtc.Get();
     smtc->put_IsPlayEnabled(true);
     smtc->put_IsPauseEnabled(true);
     smtc->put_IsStopEnabled(true);
     smtc->put_IsNextEnabled(true);
     smtc->put_IsPreviousEnabled(true);
-    native->smtc2->put_PlaybackRate(1.0);
+    smtc2->put_PlaybackRate(1.0);
 
     auto onButton = wrl::Callback<ButtonHandler>(
         [](media::ISystemMediaTransportControls *, media::ISystemMediaTransportControlsButtonPressedEventArgs *args) {
@@ -163,15 +210,156 @@ void MediaControls::attach(QWindow *window)
             }
             return S_OK;
         });
-    if (!ok(smtc->add_ButtonPressed(onButton.Get(), &native->buttonToken), "add_ButtonPressed:"))
-        return;
-    if (!ok(native->smtc2->add_PlaybackPositionChangeRequested(onSeek.Get(), &native->seekToken),
+    if (!ok(smtc->add_ButtonPressed(onButton.Get(), &buttonToken), "add_ButtonPressed:"))
+        return false;
+    if (!ok(smtc2->add_PlaybackPositionChangeRequested(onSeek.Get(), &seekToken),
             "add_PlaybackPositionChangeRequested:")) {
-        smtc->remove_ButtonPressed(native->buttonToken);
+        smtc->remove_ButtonPressed(buttonToken);
+        return false;
+    }
+    return true;
+}
+
+void MediaControls::Native::attachThumbBar()
+{
+    if (!ok(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&taskbar)),
+            "Barra de tarefas indisponível:")
+        || !ok(taskbar->HrInit(), "Barra de tarefas indisponível (HrInit):")) {
+        taskbar.Reset();
         return;
     }
-    d = std::move(native);
+    // Ícones no tamanho pequeno do DPI da janela, na cor que contrasta com o tema da barra de tarefas.
+    const int size = GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForWindow(hwnd));
+    const bool lightTaskbar = QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+                                        QSettings::NativeFormat).value(QStringLiteral("SystemUsesLightTheme"), 0).toInt() == 1;
+    const QColor color = lightTaskbar ? QColor(0, 0, 0) : QColor(255, 255, 255);
+    for (int i = 0; i < 4; ++i)
+        icons[i] = makeIcon(kThumbIcons[i], size > 0 ? size : 16, color);
+
+    // Os botões só podem entrar depois que o Windows cria o botão da janela na barra, e de novo se o Explorer
+    // reiniciar: as duas vezes chega a mensagem "TaskbarButtonCreated".
+    taskbarButtonCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
+    QCoreApplication::instance()->installNativeEventFilter(this);
+    addThumbButtons(); // se o botão já existir (a mensagem pode ter chegado antes do filtro)
+}
+
+void MediaControls::Native::fillThumbButtons(THUMBBUTTON *buttons, bool hasTrack, bool playing) const
+{
+    const struct { UINT id; HICON icon; QString tip; } spec[3] = {
+        { ThumbPrevious, icons[0], MediaControls::tr("Anterior") },
+        { ThumbPlayPause, playing ? icons[2] : icons[1], playing ? MediaControls::tr("Pausar") : MediaControls::tr("Tocar") },
+        { ThumbNext, icons[3], MediaControls::tr("Próxima") },
+    };
+    for (int i = 0; i < 3; ++i) {
+        buttons[i] = {};
+        buttons[i].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS;
+        buttons[i].iId = spec[i].id;
+        buttons[i].hIcon = spec[i].icon;
+        buttons[i].dwFlags = hasTrack ? THBF_ENABLED : THBF_DISABLED;
+        wcsncpy_s(buttons[i].szTip, reinterpret_cast<const wchar_t *>(spec[i].tip.utf16()), _TRUNCATE);
+    }
+}
+
+void MediaControls::Native::addThumbButtons()
+{
+    if (!taskbar)
+        return;
+    const Player *p = owner->m_player;
+    THUMBBUTTON buttons[3];
+    fillThumbButtons(buttons, p->hasTrack(), p->isPlaying());
+    // Falha se os botões já estão lá (só podem entrar uma vez por botão da barra): não é erro.
+    if (SUCCEEDED(taskbar->ThumbBarAddButtons(hwnd, 3, buttons)))
+        thumbState = (p->hasTrack() ? 1 : 0) | (p->isPlaying() ? 2 : 0);
+}
+
+void MediaControls::Native::updateThumbButtons(bool hasTrack, bool playing)
+{
+    const int state = (hasTrack ? 1 : 0) | (playing ? 2 : 0);
+    if (!taskbar || thumbState < 0 || state == thumbState)
+        return;
+    THUMBBUTTON buttons[3];
+    fillThumbButtons(buttons, hasTrack, playing);
+    if (ok(taskbar->ThumbBarUpdateButtons(hwnd, 3, buttons), "ThumbBarUpdateButtons:"))
+        thumbState = state;
+}
+
+bool MediaControls::Native::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
+{
+    if (eventType != "windows_generic_MSG")
+        return false;
+    const MSG *msg = static_cast<const MSG *>(message);
+    if (msg->hwnd != hwnd)
+        return false;
+    if (msg->message == taskbarButtonCreated) {
+        thumbState = -1; // Explorer reiniciado: a barra nova não tem os botões
+        addThumbButtons();
+        return false;
+    }
+    if (msg->message != WM_COMMAND || HIWORD(msg->wParam) != THBN_CLICKED)
+        return false;
+    // Os mesmos comandos dos botões da barra do player.
+    Player *player = owner->m_player;
+    switch (LOWORD(msg->wParam)) {
+    case ThumbPrevious:
+        player->previous();
+        break;
+    case ThumbPlayPause:
+        player->togglePlay();
+        break;
+    case ThumbNext:
+        player->next();
+        break;
+    default:
+        return false;
+    }
+    // No laço de eventos o Qt chama os filtros com result nulo (só o da janela tem onde escrever).
+    if (result)
+        *result = 0;
+    return true;
+}
+
+MediaControls::MediaControls(Player *player, QObject *parent)
+    : QObject(parent), m_player(player)
+{
+    // O Player emite trackChanged, stateChanged e positionChanged em sequência a cada consulta: junta tudo
+    // numa atualização só.
+    m_syncTimer.setSingleShot(true);
+    m_syncTimer.setInterval(0);
+    connect(&m_syncTimer, &QTimer::timeout, this, &MediaControls::sync);
+}
+
+MediaControls::~MediaControls()
+{
+    if (!d)
+        return;
+    s_instance = nullptr;
+    if (d->smtc) {
+        d->smtc->remove_ButtonPressed(d->buttonToken);
+        d->smtc2->remove_PlaybackPositionChangeRequested(d->seekToken);
+        d->smtc->put_IsEnabled(false);
+    }
+}
+
+void MediaControls::setAppUserModelId()
+{
+    // O mesmo id vai no AppUserModelID dos atalhos em packaging/tonal.iss. Não mude: o painel de mídia e a
+    // barra de tarefas deixam de achar o atalho.
+    ok(SetCurrentProcessExplicitAppUserModelID(L"Tonal.Player"), "AppUserModelID:");
+}
+
+void MediaControls::attach(QWindow *window)
+{
+    if (!window || d)
+        return;
+    d = std::make_unique<Native>();
+    d->owner = this;
+    d->hwnd = reinterpret_cast<HWND>(window->winId());
     s_instance = this;
+    if (!d->attachSmtc()) {
+        d->smtc.Reset();
+        d->smtc2.Reset();
+    }
+    d->attachThumbBar();
 
     for (auto signal : { &Player::trackChanged, &Player::stateChanged, &Player::positionChanged })
         connect(m_player, signal, &m_syncTimer, qOverload<>(&QTimer::start));
@@ -181,6 +369,9 @@ void MediaControls::attach(QWindow *window)
 void MediaControls::sync()
 {
     const Player *p = m_player;
+    d->updateThumbButtons(p->hasTrack(), p->isPlaying());
+    if (!d->smtc)
+        return;
     if (p->trackUri() != m_shownTrack) {
         m_shownTrack = p->trackUri();
         m_shownStatus = -1; // faixa nova: manda o estado e a linha do tempo de novo

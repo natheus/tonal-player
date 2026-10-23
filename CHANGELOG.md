@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Taskbar buttons:** hovering over Tonal in the taskbar shows previous, play/pause and next buttons under the
+  window thumbnail, like other music players.
+
 ## 0.4.0 (October 2026)
 
 - **Lyric translations:** a **Translation** button in the lyrics view adds a subtitle under each line in the app

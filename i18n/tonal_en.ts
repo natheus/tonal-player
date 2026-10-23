@@ -781,6 +781,25 @@
     </message>
 </context>
 <context>
+    <name>MediaControls</name>
+    <message>
+        <source>Anterior</source>
+        <translation>Previous</translation>
+    </message>
+    <message>
+        <source>Pausar</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <source>Tocar</source>
+        <translation>Play</translation>
+    </message>
+    <message>
+        <source>Próxima</source>
+        <translation>Next</translation>
+    </message>
+</context>
+<context>
     <name>PlayButton</name>
     <message>
         <source>Pausar</source>
