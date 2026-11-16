@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 (November 2026)
+
+- **Audio output:** Tonal now follows the Windows default output device. Switching to headphones or other
+  speakers moves the sound there after a short pause, at the same point in the track; before, it kept playing on
+  the previous device until Tonal was restarted.
+
 ## 0.4.1 (October 2026)
 
 - **Taskbar buttons:** hovering over Tonal in the taskbar shows previous, play/pause and next buttons under the
