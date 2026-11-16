@@ -18,11 +18,47 @@
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
+#  include <objbase.h>
+#  include <mmdeviceapi.h>
+#  include <wrl/implements.h>
+#  include <functional>
 #endif
 
 namespace {
 // Erros sempre aparecem; o log completo só com QT_LOGGING_RULES="tonal.librespot.debug=true".
 Q_LOGGING_CATEGORY(lcLibrespot, "tonal.librespot", QtInfoMsg)
+
+#ifdef Q_OS_WIN
+// Avisa quando a saída de som padrão do Windows muda. O Windows chama numa thread dele:
+// o aviso é repassado para a thread do LibrespotProcess.
+class OutputNotifier
+    : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
+                                          IMMNotificationClient>
+{
+public:
+    OutputNotifier(QObject *context, std::function<void(const QString &)> changed)
+        : m_context(context), m_changed(std::move(changed)) {}
+
+    IFACEMETHODIMP OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR deviceId) override
+    {
+        // O librespot (cpal) abre o dispositivo padrão do papel "console". Sem id = nenhuma saída.
+        if (flow == eRender && role == eConsole && deviceId) {
+            QMetaObject::invokeMethod(m_context, [changed = m_changed, id = QString::fromWCharArray(deviceId)] {
+                changed(id);
+            }, Qt::QueuedConnection);
+        }
+        return S_OK;
+    }
+    IFACEMETHODIMP OnDeviceStateChanged(LPCWSTR, DWORD) override { return S_OK; }
+    IFACEMETHODIMP OnDeviceAdded(LPCWSTR) override { return S_OK; }
+    IFACEMETHODIMP OnDeviceRemoved(LPCWSTR) override { return S_OK; }
+    IFACEMETHODIMP OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { return S_OK; }
+
+private:
+    QObject *m_context;
+    std::function<void(const QString &)> m_changed;
+};
+#endif
 } // namespace
 
 LibrespotProcess::LibrespotProcess(QObject *parent)
@@ -56,11 +92,71 @@ LibrespotProcess::LibrespotProcess(QObject *parent)
 
     m_restartTimer.setSingleShot(true);
     connect(&m_restartTimer, &QTimer::timeout, this, &LibrespotProcess::start);
+
+    // Uma troca de saída costuma vir em rajada (o Windows passa por dispositivos intermediários).
+    m_outputTimer.setSingleShot(true);
+    m_outputTimer.setInterval(700);
+    connect(&m_outputTimer, &QTimer::timeout, this, &LibrespotProcess::followOutputDevice);
+    watchOutputDevice();
 }
 
 LibrespotProcess::~LibrespotProcess()
 {
+#ifdef Q_OS_WIN
+    if (m_enumerator) {
+        m_enumerator->UnregisterEndpointNotificationCallback(m_outputNotifier);
+        m_outputNotifier->Release();
+        m_enumerator->Release();
+    }
+#endif
     stop();
+}
+
+void LibrespotProcess::watchOutputDevice()
+{
+#ifdef Q_OS_WIN
+    // A thread principal já tem o COM iniciado pelo Qt.
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                IID_PPV_ARGS(&m_enumerator)))) {
+        qCWarning(lcLibrespot) << "Não consegui acompanhar a saída de som padrão do Windows";
+        return;
+    }
+    // Saída em uso agora, para ignorar avisos que não mudam nada.
+    IMMDevice *device = nullptr;
+    if (SUCCEEDED(m_enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device))) {
+        LPWSTR id = nullptr;
+        if (SUCCEEDED(device->GetId(&id))) {
+            m_outputId = QString::fromWCharArray(id);
+            CoTaskMemFree(id);
+        }
+        device->Release();
+    }
+    m_outputNotifier = Microsoft::WRL::Make<OutputNotifier>(this, [this](const QString &id) {
+        m_pendingOutputId = id;
+        m_outputTimer.start();
+    }).Detach();
+    if (FAILED(m_enumerator->RegisterEndpointNotificationCallback(m_outputNotifier))) {
+        m_outputNotifier->Release();
+        m_outputNotifier = nullptr;
+        m_enumerator->Release();
+        m_enumerator = nullptr;
+    }
+#endif
+}
+
+// O librespot abre a saída de som padrão ao iniciar e fica nela. Quando o padrão do Windows
+// muda, reiniciamos o motor; o Player retoma o que tocava, como numa queda de sessão.
+void LibrespotProcess::followOutputDevice()
+{
+    if (m_pendingOutputId == m_outputId)
+        return;
+    m_outputId = m_pendingOutputId;
+    // Parado, o próximo start() já abre a saída nova. No meio do login, reiniciar abriria outra aba.
+    if (m_process.state() == QProcess::NotRunning || m_state == NeedsLogin)
+        return;
+    qCInfo(lcLibrespot) << "Saída de som padrão mudou, reiniciando o motor de áudio";
+    emit sessionLost();
+    restart();
 }
 
 QString LibrespotProcess::findExecutable() const

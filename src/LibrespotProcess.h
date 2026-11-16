@@ -5,6 +5,9 @@
 #include <QStringList>
 #include <QTimer>
 
+struct IMMDeviceEnumerator;
+struct IMMNotificationClient;
+
 // Roda o librespot (https://github.com/librespot-org/librespot) como processo
 // auxiliar. Ele aparece como um dispositivo Spotify Connect ("Tonal @ PC") e é
 // quem de fato baixa, decodifica e toca o áudio. O Tonal só manda comandos
@@ -60,9 +63,17 @@ private:
     bool hasCachedCredentials() const;
     bool requestGracefulExit();
     void attachToJob();
+    void watchOutputDevice();
+    void followOutputDevice();
 
     QProcess m_process;
     QTimer m_restartTimer;
+    QTimer m_outputTimer;
+    // Saída de som padrão do Windows: a que o motor está usando e a do último aviso.
+    QString m_outputId;
+    QString m_pendingOutputId;
+    IMMDeviceEnumerator *m_enumerator = nullptr;
+    IMMNotificationClient *m_outputNotifier = nullptr;
     QByteArray m_buffer;
     QStringList m_log;
     QString m_exe;
